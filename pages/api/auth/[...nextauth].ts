@@ -13,9 +13,8 @@ async function refreshAccessToken(token: JWT) {
 
     const body = new URLSearchParams({
       client_id: process.env.AZURE_AD_CLIENT_ID || "azure-ad-client-id",
-      client_secret:
-        process.env.AZURE_AD_CLIENT_SECRET || "azure-ad-client-secret",
-      scope: "email openid profile User.Read offline_access",
+      client_secret: process.env.AZURE_AD_CLIENT_SECRET || "azure-ad-client-secret",
+      scope: "email openid profile User.Read offline_access Directory.Read.All GroupMember.Read.All",
       grant_type: "refresh_token",
       refresh_token: token.refreshToken as string,
     });
@@ -52,12 +51,12 @@ export default NextAuth({
   providers: [
     AzureADProvider({
       clientId: process.env.AZURE_AD_CLIENT_ID || "azure-ad-client-id",
-      clientSecret:
-        process.env.AZURE_AD_CLIENT_SECRET || "azure-ad-client-secret",
+      clientSecret: process.env.AZURE_AD_CLIENT_SECRET || "azure-ad-client-secret",
       tenantId: process.env.AZURE_AD_TENANT_ID || "azure-ad-tenant-id",
       authorization: {
-        params: { scope: "email openid profile offline_access" },
-        
+        params: {
+          scope: "openid profile email offline_access User.Read Directory.Read.All GroupMember.Read.All"
+        },
       }
     }),
   ],
@@ -66,7 +65,8 @@ export default NextAuth({
   },
   secret: process.env.JWT_SECRET || "jwt-secret",
   callbacks: {
-    async jwt({ token, user, account,profile }) {
+    async jwt({ token, user, account }) {
+      // Initial sign in
       if (account && user) {
         return {
           accessToken: account.id_token,
@@ -78,6 +78,7 @@ export default NextAuth({
         };
       }
 
+      // Return previous token if the access token has not expired yet
       if (
         Date.now() <
           (token as JWT & { accessTokenExpires: number }).accessTokenExpires ||
@@ -86,26 +87,55 @@ export default NextAuth({
         return token;
       }
 
+      // Access token has expired, try to update it
       return refreshAccessToken(token);
     },
     async session({ session, token }: any) {
       if (session) {
+        // Fetch profile image
         const profileImageUrl = `https://graph.microsoft.com/v1.0/me/photo/$value`;
-        const response = await fetch(profileImageUrl, {
+        const imageResponse = await fetch(profileImageUrl, {
           headers: {
             Authorization: `Bearer ${token.accessToken}`,
           },
         });
-        const profileData = await response.json();
+
+        let profileImageData: string | undefined = undefined;
+        if (imageResponse.ok) {
+          const imageBlob = await imageResponse.blob();
+          const reader = new FileReader();
+          profileImageData = await new Promise((resolve) => {
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(imageBlob);
+          });
+        }
+
+        // Fetch user groups (raw data)
+        const groupsUrl = `https://graph.microsoft.com/v1.0/me/transitiveMemberOf?$select=displayName`;
+        const groupsResponse = await fetch(groupsUrl, {
+          headers: {
+            Authorization: `Bearer ${token.accessToken}`,
+          },
+        });
+        const groupsData = await groupsResponse.json();
+
+        // Assign retrieved data to session
         session.user = token.user;
         session.error = token.error;
         session.user.access_token_expires_at = token.accessTokenExpires;
         session.expires = token.accessTokenExpires;
-        if(response.ok) {
-          session.user.profile_image = profileData;
+
+        // Attach the profile image if present
+        if (profileImageData) {
+          session.user.profile_image = profileImageData;
         }
-        
+
+        // Attach the entire groupsData object for debugging purposes
+        session.user.groups = groupsData;
+
+        return session;
       }
+
       return session;
     },
   },

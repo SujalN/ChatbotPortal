@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/81f6c9f3-f337-4c69-9d0a-cfd9715f4412/resourceGroups/TestResourceGroup/providers/Microsoft.Web/sites/BeiGeneChatbotPortal",
+    "appService.deploySubpath": "."
+}
